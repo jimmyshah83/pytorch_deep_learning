@@ -69,12 +69,40 @@ def train_model(model, dataloader, loss_function, num_epochs=100,
             ## Step 5: Update the parameters
             optimizer.step()
 
+            # Print loss every 10 epochs
+            if epoch % 10 == 0:
+                print(f"Epoch {epoch}, Loss: {loss.item()}")
+
 
 def load_model(model, path):
     """Load the model."""
     model.load_state_dict(torch.load(path, map_location=torch.device("cpu")))
     return model
 
+
+def evaluate_model(model, dataloader, loss_function, device=torch.device("cpu")):
+    """Evaluate the model."""
+    model.eval()
+    true_predictions = 0.
+    total_predictions = 0.
+    
+    with torch.no_grad():
+        for data_inputs, data_labels in dataloader:
+            # Determine prediction of model on dev set
+            data_inputs, data_labels = data_inputs.to(device), data_labels.to(device)
+            predictions = model(data_inputs)
+            predictions = predictions.squeeze(dim=1)
+            # Sigmoid to map predictions between 0 and 1
+            predictions = torch.sigmoid(predictions)
+            prediction_labels = (predictions > 0.5).long()
+            
+             # Keep records of predictions for the accuracy metric (true_preds=TP+TN, num_preds=TP+TN+FP+FN)
+            true_predictions += (prediction_labels == data_labels).sum()
+            total_predictions += data_labels.shape[0]
+    
+    accuracy = true_predictions / total_predictions
+    print(f"Accuracy: {accuracy}")
+    return accuracy
 
 def main():
     """Main function to run the XOR model."""
@@ -86,7 +114,7 @@ def main():
     
     ############ Training ############
     train_dataset = XORDataset(size=2500)
-    dataloader = data.DataLoader(train_dataset, batch_size=10, shuffle=True)
+    dataloader = data.DataLoader(train_dataset, batch_size=128, shuffle=True)
     
     ############ Loss Function ############
     loss_function = nn.BCEWithLogitsLoss()
@@ -104,7 +132,10 @@ def main():
     print(f"State dict: {state_dict}")
     
     torch.save(state_dict, "xor_model.pth")
-    
+
+    #### Evaluating the model #####
+    evaluate_model(model=model, dataloader=dataloader, 
+                   loss_function=loss_function, device=device)
     
 if __name__ == "__main__":
     main()

@@ -54,6 +54,9 @@ def train_model(model, dataloader, loss_function, num_epochs=100,
     
     # Training loop
     for epoch in range(num_epochs):
+        epoch_loss = 0.
+        num_batches = 0.
+        
         for data_inputs, data_labels in dataloader:
              ## Step 1: Move input data to device (only strictly necessary if we use GPU)
             data_inputs, data_labels = data_inputs.to(device), data_labels.to(device)
@@ -68,10 +71,14 @@ def train_model(model, dataloader, loss_function, num_epochs=100,
             loss.backward()
             ## Step 5: Update the parameters
             optimizer.step()
-
-            # Print loss every 10 epochs
-            if epoch % 10 == 0:
-                print(f"Epoch {epoch}, Loss: {loss.item()}")
+            
+            epoch_loss += loss.item()
+            num_batches += 1
+            
+        # Print loss and accuracy every 10 epochs
+        if epoch % 10 == 0:
+            avg_loss = epoch_loss / num_batches
+            print(f"Epoch {epoch}, Average Loss: {avg_loss}")
 
 
 def load_model(model, path):
@@ -80,7 +87,7 @@ def load_model(model, path):
     return model
 
 
-def evaluate_model(model, dataloader, loss_function, device=torch.device("cpu")):
+def evaluate_model(model, dataloader, device=torch.device("cpu")):
     """Evaluate the model."""
     model.eval()
     true_predictions = 0.
@@ -103,6 +110,7 @@ def evaluate_model(model, dataloader, loss_function, device=torch.device("cpu"))
     accuracy = true_predictions / total_predictions
     print(f"Accuracy: {accuracy}")
     return accuracy
+
 
 def main():
     """Main function to run the XOR model."""
@@ -134,8 +142,11 @@ def main():
     torch.save(state_dict, "xor_model.pth")
 
     #### Evaluating the model #####
-    evaluate_model(model=model, dataloader=dataloader, 
-                   loss_function=loss_function, device=device)
+    test_dataset = XORDataset(size=500)
+    test_data_loader = data.DataLoader(test_dataset, batch_size=128, 
+                                       shuffle=False, drop_last=False)
+    evaluate_model(model=model, dataloader=test_data_loader, device=device)
+    
     
 if __name__ == "__main__":
     main()

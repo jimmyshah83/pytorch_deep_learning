@@ -2,9 +2,10 @@
 from torch import nn
 import torch
 from torch.utils import data
+from torch.utils.tensorboard import SummaryWriter
 
 
-class XORDataset(data.Dataset):    
+class XORDataset(data.Dataset):
     """Dataset for XOR operation."""
     def __init__(self, size, std=0.1):
         """Initialize the dataset."""
@@ -48,7 +49,7 @@ class XORModel(nn.Module):
 
 
 def train_model(model, dataloader, loss_function, num_epochs=100, 
-                device=torch.device("cpu"), optimizer=None):
+                device=torch.device("cpu"), optimizer=None, writer=None):
     """Train the model."""
     model.train()
     
@@ -57,27 +58,39 @@ def train_model(model, dataloader, loss_function, num_epochs=100,
         epoch_loss = 0.
         num_batches = 0.
         
-        for data_inputs, data_labels in dataloader:
-             ## Step 1: Move input data to device (only strictly necessary if we use GPU)
-            data_inputs, data_labels = data_inputs.to(device), data_labels.to(device)
-             ## Step 2: Run the model on the input data
+        for batch_idx, (data_inputs, data_labels) in enumerate(dataloader):
+            # Step 1: Move input data to device
+            data_inputs = data_inputs.to(device)
+            data_labels = data_labels.to(device)
+            # Step 2: Run the model on the input data
             predictions = model(data_inputs)
             # Output is [Batch size, 1], but we want [Batch size]
-            predictions = predictions.squeeze(dim=1) 
-            ## Step 3: Calculate the loss
+            predictions = predictions.squeeze(dim=1)
+            # Step 3: Calculate the loss
             loss = loss_function(predictions, data_labels.float())
-            ## Step 4: Perform backpropagation
+            # Step 4: Perform backpropagation
             optimizer.zero_grad()
             loss.backward()
-            ## Step 5: Update the parameters
+            # Step 5: Update the parameters
             optimizer.step()
             
             epoch_loss += loss.item()
             num_batches += 1
             
-        # Print loss and accuracy every 10 epochs
+            # Log batch loss to TensorBoard
+            if writer is not None:
+                global_step = epoch * len(dataloader) + batch_idx
+                writer.add_scalar('Train/BatchLoss', loss.item(), global_step)
+            
+        # Calculate average loss for the epoch
+        avg_loss = epoch_loss / num_batches
+        
+        # Log epoch loss to TensorBoard
+        if writer is not None:
+            writer.add_scalar('Train/EpochLoss', avg_loss, epoch)
+            
+        # Print loss every 10 epochs
         if epoch % 10 == 0:
-            avg_loss = epoch_loss / num_batches
             print(f"Epoch {epoch}, Average Loss: {avg_loss}")
 
 
@@ -87,7 +100,8 @@ def load_model(model, path):
     return model
 
 
-def evaluate_model(model, dataloader, device=torch.device("cpu")):
+def evaluate_model(model, dataloader, device=torch.device("cpu"),
+                   writer=None, epoch=None):
     """Evaluate the model."""
     model.eval()
     true_predictions = 0.
@@ -103,11 +117,18 @@ def evaluate_model(model, dataloader, device=torch.device("cpu")):
             predictions = torch.sigmoid(predictions)
             prediction_labels = (predictions > 0.5).long()
             
-             # Keep records of predictions for the accuracy metric (true_preds=TP+TN, num_preds=TP+TN+FP+FN)
+            # Keep records of predictions for accuracy metric
+            # (true_preds=TP+TN, num_preds=TP+TN+FP+FN)
             true_predictions += (prediction_labels == data_labels).sum()
             total_predictions += data_labels.shape[0]
     
     accuracy = true_predictions / total_predictions
+    
+    # Log accuracy to TensorBoard
+    if writer is not None:
+        step = epoch if epoch is not None else 0
+        writer.add_scalar('Eval/Accuracy', accuracy, step)
+    
     print(f"Accuracy: {accuracy}")
     return accuracy
 
@@ -120,32 +141,58 @@ def main():
     for name, param in model.named_parameters():
         print(f"Parameter: {name}:, Shape: {param.shape}")
     
-    ############ Training ############
+    # TensorBoard Setup
+    writer = SummaryWriter('runs/xor_classifier')
+    
+    # Log model architecture
     train_dataset = XORDataset(size=2500)
+    sample_loader = data.DataLoader(train_dataset, batch_size=1)
+    sample_input = next(iter(sample_loader))[0].to(device)
+    writer.add_graph(model, sample_input)
+
+    # Training
     dataloader = data.DataLoader(train_dataset, batch_size=128, shuffle=True)
-    
-    ############ Loss Function ############
+
+    # Loss Function
     loss_function = nn.BCEWithLogitsLoss()
-    
-    ############ Optimizer ############
+
+    # Optimizer
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
     
-    model.to(device)
-    train_model(model=model, dataloader=dataloader, 
-                loss_function=loss_function, device=device, 
-                optimizer=optimizer, num_epochs=10)
+    # Log hyperparameters
+    writer.add_hparams(
+        {'lr': 0.1, 'batch_size': 128, 'num_epochs': 10, 'hidden_size': 4},
+        {}
+    )
     
-    ##### Saving the model #####
+    model.to(device)
+    train_model(model=model, dataloader=dataloader,
+                loss_function=loss_function, device=device,
+                optimizer=optimizer, num_epochs=10, writer=writer)
+
+    # Saving the model
     state_dict = model.state_dict()
     print(f"State dict: {state_dict}")
     
     torch.save(state_dict, "xor_model.pth")
 
-    #### Evaluating the model #####
+    # Evaluating the model
     test_dataset = XORDataset(size=500)
-    test_data_loader = data.DataLoader(test_dataset, batch_size=128, 
-                                       shuffle=False, drop_last=False)
-    evaluate_model(model=model, dataloader=test_data_loader, device=device)
+    test_data_loader = data.DataLoader(test_dataset, batch_size=128,
+                                        shuffle=False, drop_last=False)
+    evaluate_model(model=model, dataloader=test_data_loader, device=device,
+                   writer=writer, epoch=10)
+    
+    # Log model weights histograms
+    for name, param in model.named_parameters():
+        writer.add_histogram(f'Weights/{name}', param, 10)
+        if param.grad is not None:
+            writer.add_histogram(f'Gradients/{name}', param.grad, 10)
+    
+    # Close TensorBoard writer
+    writer.close()
+    print("TensorBoard logs saved to 'runs/xor_classifier'.")
+    print("Run 'tensorboard --logdir=runs' to view.")
     
     
 if __name__ == "__main__":

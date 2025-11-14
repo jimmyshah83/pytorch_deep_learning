@@ -47,22 +47,64 @@ class XORModel(nn.Module):
         return x
 
 
+def train_model(model, dataloader, loss_function, num_epochs=100, 
+                device=torch.device("cpu"), optimizer=None):
+    """Train the model."""
+    model.train()
+    
+    # Training loop
+    for epoch in range(num_epochs):
+        for data_inputs, data_labels in dataloader:
+             ## Step 1: Move input data to device (only strictly necessary if we use GPU)
+            data_inputs, data_labels = data_inputs.to(device), data_labels.to(device)
+             ## Step 2: Run the model on the input data
+            predictions = model(data_inputs)
+            # Output is [Batch size, 1], but we want [Batch size]
+            predictions = predictions.squeeze(dim=1) 
+            ## Step 3: Calculate the loss
+            loss = loss_function(predictions, data_labels.float())
+            ## Step 4: Perform backpropagation
+            optimizer.zero_grad()
+            loss.backward()
+            ## Step 5: Update the parameters
+            optimizer.step()
+
+
+def load_model(model, path):
+    """Load the model."""
+    model.load_state_dict(torch.load(path, map_location=torch.device("cpu")))
+    return model
+
+
 def main():
     """Main function to run the XOR model."""
-    model = XORModel(num_inputs=2, num_hidden=4, num_outputs=1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = XORModel(num_inputs=2, num_hidden=4, num_outputs=1).to(device)
     print(model)
     for name, param in model.named_parameters():
         print(f"Parameter: {name}:, Shape: {param.shape}")
-        
-    dataset = XORDataset(size=200)
-    print(f"Data: {dataset[0][0]}, Label: {dataset[0][1]}")
     
-    dataloader = data.DataLoader(dataset, batch_size=10, shuffle=True)
-    data_inputs, data_labels = next(iter(dataloader))
-    print(f"Data inputs: {data_inputs}, Data labels: {data_labels}")
+    ############ Training ############
+    train_dataset = XORDataset(size=2500)
+    dataloader = data.DataLoader(train_dataset, batch_size=10, shuffle=True)
     
+    ############ Loss Function ############
     loss_function = nn.BCEWithLogitsLoss()
+    
+    ############ Optimizer ############
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-
+    
+    model.to(device)
+    train_model(model=model, dataloader=dataloader, 
+                loss_function=loss_function, device=device, 
+                optimizer=optimizer, num_epochs=10)
+    
+    ##### Saving the model #####
+    state_dict = model.state_dict()
+    print(f"State dict: {state_dict}")
+    
+    torch.save(state_dict, "xor_model.pth")
+    
+    
 if __name__ == "__main__":
     main()
